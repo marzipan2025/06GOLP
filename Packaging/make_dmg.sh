@@ -7,7 +7,7 @@ set -e
 APP_NAME="06GOLP"
 EXECUTABLE_NAME="GOLP"
 VOL_NAME="06GOLP"
-VERSION="1.0"
+VERSION="1.0.1"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"

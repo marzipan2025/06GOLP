@@ -213,6 +213,7 @@ final class AppCatalog: ObservableObject {
 @MainActor
 final class LaunchpadController: NSObject, ObservableObject {
     let catalog = AppCatalog()
+    private let preferredPrimaryDisplayIDKey = "preferredPrimaryDisplayID"
 
     private var windows: [NSWindow] = []
     private var hotKeyController: HotKeyController?
@@ -292,7 +293,12 @@ final class LaunchpadController: NSObject, ObservableObject {
                 panel.makeKeyAndOrderFront(nil)
                 primaryWindow = panel
             } else {
-                let content = LaunchpadBackdropView(closeAction: { [weak self] in self?.hide() })
+                let content = LaunchpadBackdropView(
+                    closeAction: { [weak self] in self?.hide() },
+                    makePrimaryAction: { [weak self] in
+                        self?.setPrimaryScreen(screen)
+                    }
+                )
                 panel.contentView = NSHostingView(rootView: content)
                 panel.setFrame(panelFrame, display: true)
                 panel.orderFront(nil)
@@ -325,7 +331,12 @@ final class LaunchpadController: NSObject, ObservableObject {
     }
 
     private func primaryScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.frame.origin == .zero }
+        if let savedDisplayID = (UserDefaults.standard.object(forKey: preferredPrimaryDisplayIDKey) as? NSNumber)?.uint32Value,
+           let savedScreen = NSScreen.screens.first(where: { displayID(for: $0) == savedDisplayID }) {
+            return savedScreen
+        }
+
+        return NSScreen.screens.first { $0.frame.origin == .zero }
             ?? NSScreen.main
             ?? NSScreen.screens.first
     }
@@ -340,6 +351,24 @@ final class LaunchpadController: NSObject, ObservableObject {
             .sorted()
             .joined(separator: "|")
         return "\(NSStringFromRect(primaryScreen.frame))|\(screenFrames)"
+    }
+
+    private func setPrimaryScreen(_ screen: NSScreen) {
+        if let displayID = displayID(for: screen) {
+            UserDefaults.standard.set(displayID, forKey: preferredPrimaryDisplayIDKey)
+        }
+
+        let initialPage = Date().timeIntervalSince(lastClosedAt) <= 10 ? lastPage : 0
+        rebuildWindows(primaryScreen: screen, initialPage: initialPage)
+        screenSignature = screenSignature(for: NSScreen.screens, primaryScreen: screen)
+        windows.forEach { $0.orderFront(nil) }
+        primaryWindow?.makeKeyAndOrderFront(nil)
+        isShowing = true
+    }
+
+    private func displayID(for screen: NSScreen) -> UInt32? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return (screen.deviceDescription[key] as? NSNumber)?.uint32Value
     }
 
     @objc private func openFromMenu() {
@@ -584,6 +613,7 @@ struct LaunchpadBackdrop: View {
 
 struct LaunchpadBackdropView: View {
     let closeAction: () -> Void
+    let makePrimaryAction: () -> Void
 
     var body: some View {
         ZStack {
@@ -595,7 +625,39 @@ struct LaunchpadBackdropView: View {
                     closeAction()
                 }
                 .ignoresSafeArea()
+
+            SecondaryDisplayButton(action: makePrimaryAction)
         }
+    }
+}
+
+struct SecondaryDisplayButton: View {
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text("Open on This Display")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.86))
+                .padding(.horizontal, 30)
+                .frame(height: AppConstants.searchHeight)
+                .background {
+                    RoundedRectangle(cornerRadius: AppConstants.searchHeight / 2, style: .continuous)
+                        .fill(.white.opacity(isHovering ? 0.18 : 0.13))
+                        .background {
+                            RoundedRectangle(cornerRadius: AppConstants.searchHeight / 2, style: .continuous)
+                                .fill(.white.opacity(0.06))
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AppConstants.searchHeight / 2, style: .continuous)
+                                .stroke(.white.opacity(isHovering ? 0.30 : 0.22), lineWidth: 1)
+                        }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: AppConstants.searchHeight / 2, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -960,7 +1022,7 @@ struct AppIconButton: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(.white.opacity(isHovering ? 0.9 : 0))
-                    .shadow(color: .black.opacity(isHovering ? 0.7 : 0), radius: 2, y: 1)
+                    .shadow(color: .black.opacity(isHovering ? 0.35 : 0), radius: 1, y: 0.5)
                     .frame(width: AppConstants.itemMinWidth, height: 16)
             }
             .frame(width: AppConstants.itemMinWidth, height: AppConstants.itemHeight)
@@ -1020,7 +1082,7 @@ struct FolderIconButton: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(.white.opacity(isHovering ? 0.9 : 0))
-                    .shadow(color: .black.opacity(isHovering ? 0.7 : 0), radius: 2, y: 1)
+                    .shadow(color: .black.opacity(isHovering ? 0.35 : 0), radius: 1, y: 0.5)
                     .frame(width: AppConstants.itemMinWidth, height: 16)
             }
             .frame(width: AppConstants.itemMinWidth, height: AppConstants.itemHeight)
@@ -1068,9 +1130,17 @@ struct FolderOverlay: View {
                     RoundedRectangle(cornerRadius: 56, style: .continuous)
                         .fill(.clear)
                         .glassEffect(.clear, in: .rect(cornerRadius: 56))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 56, style: .continuous)
+                                .fill(.white.opacity(0.12))
+                        }
                 } else {
                     RoundedRectangle(cornerRadius: 56, style: .continuous)
                         .fill(.ultraThinMaterial)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 56, style: .continuous)
+                                .fill(.white.opacity(0.12))
+                        }
                         .overlay {
                             RoundedRectangle(cornerRadius: 56, style: .continuous)
                                 .stroke(.white.opacity(0.14), lineWidth: 1.35)
